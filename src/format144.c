@@ -1,5 +1,8 @@
+#define PROGRAM_ID "Format144 1.11"
+#define PROGRAM_DATE "Oct 27, 2004"
+#define COPYRIGHT "2004 Denis Petrov"
 /*
-Format144 - Version 1.01
+Format144 - Version 1.11
 
 Copyright (c) 2004 Denis Petrov
 
@@ -24,7 +27,7 @@ Free Software Foundation, Inc.,
 #include <windows.h>
 #include <winioctl.h>
 #include <stdio.h>
-#include <alloc.h>
+#include <malloc.h>
 #include <conio.h>
 
 void print_error(DWORD error)
@@ -92,26 +95,29 @@ char * buf;
 
 int total_tracks = 80;
 
-void main(void)
+int main(void)
 {
   char c;
 
 
-  int with_errors = 1;
+  int with_errors;
   HANDLE hFloppy;
   DWORD outBytes;
   FORMAT_PARAMETERS format_parameters;
   PARTITION_INFORMATION part_info;
   DRIVE_LAYOUT_INFORMATION drive_info;
   VERIFY_INFORMATION verify_info;
+  /* volume serial number as two words at boot sector pos 0x27 and 0x29 */
+  WORD serial_lo, serial_hi;
+  SYSTEMTIME st;
 
-  printf("Allocating buffer of %d bytes...\n",BUF_SIZE);
+  printf(PROGRAM_ID "  " PROGRAM_DATE "  Copyright(c) " COPYRIGHT "\n");
 
   buf = malloc(BUF_SIZE);
   if ( !buf )
   {
     printf("Out of Memory\n");
-    return;
+    return 1;
   }
 
   /* Initialize buffer with zeros and add FAT signatures */
@@ -145,6 +151,9 @@ void main(void)
 
        do
        {
+
+               with_errors = 0; /* Reset error flag */
+
                printf("Opening floppy drive A:...\n");
 
                hFloppy = CreateFile
@@ -173,6 +182,11 @@ void main(void)
 
                        printf("Formatting A: 1.44M...\n");
 
+
+                       /*
+                         Attention - inner loop here, breaking out of it will not
+                         break from the fake loop above
+                       */
                        for ( itrack = 0; itrack < total_tracks; itrack++ )
                        {
                            printf("Track %d of %d\r",itrack+1,total_tracks);
@@ -193,13 +207,36 @@ void main(void)
                                   ) )
                            {
                              print_error(GetLastError());
+                             with_errors = 1;
                              break;
                            }
                        }
 
+                       /*
+                          We broke out of the inner loop above,
+                          need to break from the fake loop
+                       */
+                       if ( with_errors ) break;
+
                        /* create filesystem */
 
                        printf("Writing boot sector...\n");
+
+                       /* create a volume serial number per
+                          http://www.faqs.org/faqs/assembly-language/x86/general/part3/section-3.html
+                       */
+                       GetSystemTime(&st);
+
+                       serial_lo = st.wMonth * 0x100 + st.wDay +
+                                   st.wSecond * 0x100 + st.wMilliseconds;;
+
+                       serial_hi = st.wHour * 0x100 + st.wMinute +
+                                   st.wYear;
+
+                       *((WORD*)(&(boot_sect[0x27]))) = serial_lo;
+                       *((WORD*)(&(boot_sect[0x29]))) = serial_hi;
+
+                       printf("Volume Serial Number: %04X-%04X\n",serial_hi,serial_lo);
 
                        if( !  WriteFile
                               (
@@ -211,6 +248,7 @@ void main(void)
                               ) )
                        {
                          print_error(GetLastError());
+                         with_errors = 1;
                          break;
                        }
 
@@ -226,10 +264,9 @@ void main(void)
                               ) )
                        {
                          print_error(GetLastError());
+                         with_errors = 1;
                          break;
                        }
-
-                       with_errors = 0;
 
 
                  } while (0);
@@ -238,7 +275,7 @@ void main(void)
 
                  CloseHandle(hFloppy);
 
-                 printf("Done%s.\n",with_errors ? " with errors" : "");
+                 printf("Done%s.\n", with_errors ? " with errors" : "");
 
                }
                else
@@ -248,7 +285,7 @@ void main(void)
 
                printf("Press 'a' to format another diskette\n"
                       "WARNING: format will start immediately!\n"
-                      "Press any other key to exit\n");
+                      "Press any other key to finish\n");
 
                {
                  char c = getch();
@@ -259,5 +296,7 @@ void main(void)
   }
 
   free(buf);
+
+  return 0;
 }
 
